@@ -1,0 +1,161 @@
+@page "/"
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<PocDbContext> DbFactory
+@inject IJSRuntime JS
+
+<PageTitle>BeSQL Persistence POC</PageTitle>
+
+<Heading Size="HeadingSize.Is2" Class="mb-3">BeSQL Persistence POC</Heading>
+
+<Paragraph TextColor="TextColor.Muted">
+    Add a note, then reload the page (or fully close and reopen the app). If the notes come back,
+    the BeSQL SQLite database survived to Cache Storage.
+</Paragraph>
+
+<!-- Add note -->
+<Card Class="mb-4">
+    <CardBody>
+        <Fields>
+            <Field ColumnSize="ColumnSize.Is9">
+                <TextInput @bind-Value="_newText"
+                           Placeholder="Type a note and press Enter or Add…"
+                           KeyPressed="@OnKeyPressed" />
+            </Field>
+            <Field ColumnSize="ColumnSize.Is3">
+                <Button Color="Color.Primary" Clicked="AddNote" Block Disabled="_busy">Add note</Button>
+            </Field>
+        </Fields>
+    </CardBody>
+</Card>
+
+<!-- Status panel -->
+<Card Class="mb-4" Background="Background.Dark">
+    <CardBody>
+        <Row>
+            <Column ColumnSize="ColumnSize.Is4">
+                <Heading Size="HeadingSize.Is6" TextColor="TextColor.Light">Total rows</Heading>
+                <Heading Size="HeadingSize.Is1" TextColor="TextColor.White">@_notes.Count</Heading>
+            </Column>
+            <Column ColumnSize="ColumnSize.Is8">
+                <Heading Size="HeadingSize.Is6" TextColor="TextColor.Light">Most recent note (CreatedAtUtc)</Heading>
+                <Heading Size="HeadingSize.Is4" TextColor="TextColor.White">
+                    @(_notes.Count == 0 ? "— none yet —" : _notes[0].CreatedAtUtc.ToString("u"))
+                </Heading>
+            </Column>
+        </Row>
+        <Divider />
+        <Text TextColor="TextColor.Light">
+            Durable store: Cache Storage 'bit-Besql' @@ /data/cache/clikclientdb.sqlite3
+        </Text>
+    </CardBody>
+</Card>
+
+<!-- Actions -->
+<Div Class="mb-4">
+    <Button Color="Color.Secondary" Clicked="Reload" Class="me-2">Reload page</Button>
+    <Button Color="Color.Light" Clicked="LoadNotes">Re-read from DB</Button>
+</Div>
+
+@if (_error is not null)
+{
+    <Alert Color="Color.Danger" Visible>
+        <AlertMessage>Error</AlertMessage>
+        <AlertDescription>@_error</AlertDescription>
+    </Alert>
+}
+
+<!-- Notes list -->
+<Heading Size="HeadingSize.Is5">Notes (newest first)</Heading>
+@if (_notes.Count == 0)
+{
+    <Paragraph TextColor="TextColor.Muted">No notes stored yet.</Paragraph>
+}
+else
+{
+    <Table Striped Bordered Narrow>
+        <TableHeader>
+            <TableRow>
+                <TableHeaderCell Style="width:80px">Id</TableHeaderCell>
+                <TableHeaderCell>Text</TableHeaderCell>
+                <TableHeaderCell Style="width:220px">CreatedAtUtc</TableHeaderCell>
+            </TableRow>
+        </TableHeader>
+        <TableBody>
+            @foreach (var note in _notes)
+            {
+                <TableRow>
+                    <TableRowCell>@note.Id</TableRowCell>
+                    <TableRowCell>@note.Text</TableRowCell>
+                    <TableRowCell>@note.CreatedAtUtc.ToString("u")</TableRowCell>
+                </TableRow>
+            }
+        </TableBody>
+    </Table>
+}
+
+@code {
+    private readonly List<Note> _notes = new();
+    private string _newText = string.Empty;
+    private bool _busy;
+    private string? _error;
+
+    // On startup, load and display existing rows — this is what proves persistence after a restart.
+    protected override async Task OnInitializedAsync() => await LoadNotes();
+
+    private async Task LoadNotes()
+    {
+        _error = null;
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var rows = await db.Notes
+                .OrderByDescending(n => n.CreatedAtUtc)
+                .ThenByDescending(n => n.Id)
+                .ToListAsync();
+            _notes.Clear();
+            _notes.AddRange(rows);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
+        }
+    }
+
+    private async Task AddNote()
+    {
+        if (string.IsNullOrWhiteSpace(_newText))
+            return;
+
+        _busy = true;
+        _error = null;
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            db.Notes.Add(new Note
+            {
+                Text = _newText.Trim(),
+                CreatedAtUtc = DateTime.UtcNow
+            });
+            // Plain SaveChangesAsync — BeSQL persists the SQLite file to Cache Storage here.
+            await db.SaveChangesAsync();
+            _newText = string.Empty;
+            await LoadNotes();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task OnKeyPressed(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+            await AddNote();
+    }
+
+    private async Task Reload() => await JS.InvokeVoidAsync("location.reload");
+}

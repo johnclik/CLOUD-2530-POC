@@ -1,0 +1,68 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow one concurrent deployment; cancel in-progress runs for the same ref.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install wasm-tools workload
+        run: dotnet workload install wasm-tools
+
+      - name: Publish
+        run: dotnet publish BesqlPersistencePoc.csproj -c Release -o publish
+
+      # GitHub Pages serves this project from https://<user>.github.io/<repo>/, so the
+      # app's <base href="/"> must be rewritten to "/<repo>/". $GITHUB_REPOSITORY is
+      # "<owner>/<repo>"; take the part after the slash.
+      - name: Rewrite base href for project Pages
+        run: |
+          REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          echo "Rewriting <base href> to /${REPO_NAME}/"
+          sed -i "s|<base href=\"/\" />|<base href=\"/${REPO_NAME}/\" />|g" publish/wwwroot/index.html
+
+      # SPA deep-link fallback: GitHub Pages returns 404.html for unknown paths.
+      - name: Add SPA 404 fallback
+        run: cp publish/wwwroot/index.html publish/wwwroot/404.html
+
+      # Stop Pages' Jekyll processing (it would strip files/folders starting with "_",
+      # e.g. the _framework directory that Blazor WASM depends on).
+      - name: Add .nojekyll
+        run: touch publish/wwwroot/.nojekyll
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: publish/wwwroot
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
