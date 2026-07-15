@@ -1,6 +1,6 @@
 {
-  "name": "BesqlPersistencePoc",
-  "short_name": "BesqlPersistencePoc",
+  "name": "Blazor Wrapper POC",
+  "short_name": "Blazor Wrapper POC",
   "id": "./",
   "start_url": "./",
   "display": "standalone",
